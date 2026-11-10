@@ -67,6 +67,11 @@ const CSS: &str = r#"
 
 fn main() -> glib::ExitCode {
     gpu::prefer_integrated();
+    // Decoded images are tens of MB and come from worker threads. glibc would
+    // keep such freed blocks in per-thread arenas and RSS creeps up over a
+    // long session; a fixed mmap threshold hands them back right away.
+    // SAFETY: plain allocator tuning before any thread exists.
+    unsafe { libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20) };
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)

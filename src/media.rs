@@ -97,17 +97,7 @@ pub struct Preview {
 
 pub fn preview(item: &Item) -> Preview {
     match item.kind {
-        Kind::Image => {
-            let widget = match gdk::Texture::from_filename(&item.path) {
-                Ok(tex) => {
-                    let pic = picture();
-                    pic.set_paintable(Some(&tex));
-                    pic.upcast()
-                }
-                Err(e) => unsupported(&item.path, "Can't show this image", e.message()).upcast(),
-            };
-            Preview { widget, stream: None }
-        }
+        Kind::Image => Preview { widget: image(&item.path).upcast(), stream: None },
         Kind::Gif => Preview { widget: gif(&item.path), stream: None },
         Kind::Video => {
             let pic = picture();
@@ -195,6 +185,49 @@ fn stream_error(stream: &gtk::MediaStream, path: &Path) -> adw::Bin {
         }
     });
     bin
+}
+
+/// Longest side images are scaled down to: enough for a full-screen card
+/// on a 4K display, and a small fraction of the memory of an 8K original.
+const MAX_SIDE: i32 = 2560;
+
+/// Decodes the image on a worker thread so swiping never waits for it.
+fn image(path: &Path) -> adw::Bin {
+    let bin = adw::Bin::new();
+    let pic = picture();
+    bin.set_child(Some(&pic));
+    let weak = bin.downgrade();
+    let path = path.to_path_buf();
+    glib::spawn_future_local(async move {
+        let decode_path = path.clone();
+        let result = gio::spawn_blocking(move || load_texture(&decode_path)).await;
+        let Some(bin) = weak.upgrade() else { return };
+        match result {
+            Ok(Ok(tex)) => pic.set_paintable(Some(&tex)),
+            Ok(Err(reason)) => bin.set_child(Some(&unsupported(&path, "Can't show this image", &reason))),
+            Err(_) => bin.set_child(Some(&unsupported(&path, "Can't show this image", "The decoder crashed"))),
+        }
+    });
+    bin
+}
+
+/// Loads `path`, shrinking it to fit `MAX_SIDE`. Runs off the main thread.
+fn load_texture(path: &Path) -> Result<gdk::Texture, String> {
+    let tex = gdk::Texture::from_filename(path).map_err(|e| e.message().to_owned())?;
+    let (w, h) = (tex.width(), tex.height());
+    if w.max(h) <= MAX_SIDE {
+        return Ok(tex);
+    }
+    let mut downloader = gdk::TextureDownloader::new(&tex);
+    downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
+    let (bytes, stride) = downloader.download_bytes();
+    drop(tex);
+    let full = gdk_pixbuf::Pixbuf::from_bytes(&bytes, gdk_pixbuf::Colorspace::Rgb, true, 8, w, h, stride as i32);
+    let k = MAX_SIDE as f64 / w.max(h) as f64;
+    let (sw, sh) = (((w as f64 * k).round() as i32).max(1), ((h as f64 * k).round() as i32).max(1));
+    let small = full.scale_simple(sw, sh, gdk_pixbuf::InterpType::Bilinear).ok_or("Out of memory")?;
+    let format = if small.has_alpha() { gdk::MemoryFormat::R8g8b8a8 } else { gdk::MemoryFormat::R8g8b8 };
+    Ok(gdk::MemoryTexture::new(sw, sh, format, &small.read_pixel_bytes(), small.rowstride() as usize).upcast())
 }
 
 fn picture() -> gtk::Picture {
