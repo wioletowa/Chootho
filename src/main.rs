@@ -1,6 +1,7 @@
 mod card;
 mod media;
 mod player;
+mod tutorial;
 mod window;
 
 use adw::prelude::*;
@@ -42,6 +43,14 @@ const CSS: &str = r#"
 }
 .stamp.like { color: #57e389; border-color: #57e389; transform: rotate(-14deg); }
 .stamp.nope { color: #ff6b6b; border-color: #ff6b6b; transform: rotate(14deg); }
+.welcome { background-color: alpha(@window_bg_color, 0.84); }
+.welcome-title { font-size: 44px; font-weight: 900; }
+.welcome-arrow { font-size: 22px; font-weight: 800; }
+.welcome-arrow.like { color: #57e389; }
+.welcome-arrow.nope { color: #ff6b6b; }
+.welcome-arrow.fav { color: #f8e45c; }
+.tutorial-hint { font-size: 18px; font-weight: 700; margin: 12px 24px 0; }
+.tutorial-check { color: #57e389; }
 .stamp.fav  { color: #f8e45c; border-color: #f8e45c; margin-bottom: 40px; }
 .action {
     min-width: 64px;
@@ -81,7 +90,9 @@ fn main() -> glib::ExitCode {
 
 fn present(app: &adw::Application, dir: Option<std::path::PathBuf>) {
     let win = window::Window::new(app);
-    if let Some(dir) = dir {
+    if tutorial::should_show() {
+        win.start_tutorial(dir);
+    } else if let Some(dir) = dir {
         win.open(&dir);
     }
     win.window.present();

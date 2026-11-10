@@ -1,14 +1,25 @@
-//! The main window: the card stack, gestures, keys and undo history.
+//! The main window: the card stack, gestures, keys, undo history and the
+//! first-run tutorial.
 
 use crate::card::SwipeCard;
 use crate::media::{self, Item, Verdict};
+use crate::tutorial::{self, STEPS};
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 const BACK_SCALE: f64 = 0.94;
+/// How far the tutorial's hint tilts the card, in pixels.
+const HINT_REACH: f64 = 70.0;
+
+/// What a card shows: a file from the folder, or a tutorial cat.
+enum Source {
+    File(Item),
+    Cat(usize),
+}
 
 /// One card position (front or back) with its frame and verdict stamps.
 struct Slot {
@@ -40,6 +51,7 @@ impl Slot {
             frame.add_overlay(&label);
             label
         };
+        // Each stamp sits on the side the card is moving away from.
         let like = stamp("ЛАЙК", "like", gtk::Align::Start, gtk::Align::Start);
         let nope = stamp("НЕТ", "nope", gtk::Align::End, gtk::Align::Start);
         let fav = stamp("★ ИЗБРАННОЕ", "fav", gtk::Align::Center, gtk::Align::End);
@@ -65,12 +77,23 @@ impl Slot {
         self.caption.set_label("");
     }
 
-    fn load(&self, item: &Item) {
+    fn load(&self, source: &Source) {
         self.clear();
-        let preview = media::preview(item);
-        self.bin.set_child(Some(&preview.widget));
-        self.stream.replace(preview.stream);
-        self.caption.set_label(&item.path.file_name().unwrap_or_default().to_string_lossy());
+        match source {
+            Source::File(item) => {
+                let preview = media::preview(item);
+                self.bin.set_child(Some(&preview.widget));
+                self.stream.replace(preview.stream);
+                self.caption.set_label(&item.path.file_name().unwrap_or_default().to_string_lossy());
+            }
+            Source::Cat(step) => {
+                let pic = gtk::Picture::for_paintable(&tutorial::step_texture(*step));
+                pic.set_content_fit(gtk::ContentFit::Cover);
+                pic.set_can_shrink(true);
+                self.bin.set_child(Some(&pic));
+                self.caption.set_label(&format!("cat{}.jpg", step + 1));
+            }
+        }
     }
 
     /// Moves this slot's content into `other`, leaving this one empty.
@@ -114,6 +137,15 @@ struct State {
     idx: usize,
     history: Vec<Moved>,
     anim: Option<adw::Animation>,
+    /// Card offset when the current drag started (a hint may have tilted it).
+    drag_base: (f64, f64),
+    /// Tutorial mode: `idx` is the step and `items` stays empty.
+    tutorial: bool,
+    hint: Option<adw::Animation>,
+    /// Bumped on every interaction so stale hint timers do nothing.
+    hint_gen: u64,
+    /// A folder given on the command line, opened once the tutorial ends.
+    pending: Option<PathBuf>,
 }
 
 pub struct Window {
@@ -123,6 +155,10 @@ pub struct Window {
     toasts: adw::ToastOverlay,
     done: adw::StatusPage,
     undo_buttons: [gtk::Button; 2],
+    welcome: gtk::Box,
+    skip: gtk::Button,
+    hint_label: gtk::Label,
+    check: SwipeCard,
     front: Slot,
     back: Slot,
     state: RefCell<State>,
@@ -146,6 +182,13 @@ impl Window {
         let header_undo = gtk::Button::from_icon_name("edit-undo-symbolic");
         header_undo.set_tooltip_text(Some("Отменить (Ctrl+Z, ↓)"));
         header.pack_end(&header_undo);
+        let skip = gtk::Button::builder()
+            .child(&adw::ButtonContent::builder().label("Пропустить").icon_name("go-next-symbolic").build())
+            .tooltip_text("Пропустить обучение (Esc)")
+            .visible(false)
+            .build();
+        skip.add_css_class("flat");
+        header.pack_end(&skip);
 
         // Empty state.
         let empty_open = gtk::Button::with_label("Открыть папку");
@@ -193,7 +236,10 @@ impl Window {
             buttons.append(b);
         }
 
+        let hint_label = gtk::Label::builder().wrap(true).justify(gtk::Justification::Center).visible(false).build();
+        hint_label.add_css_class("tutorial-hint");
         let cards = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        cards.append(&hint_label);
         cards.append(&deck);
         cards.append(&buttons);
 
@@ -212,11 +258,29 @@ impl Window {
         stack.add_named(&cards, Some("cards"));
         stack.add_named(&done, Some("done"));
 
+        // Tutorial finale: a big check mark that pops in.
+        let check_icon = gtk::Image::from_icon_name("object-select-symbolic");
+        check_icon.set_pixel_size(160);
+        check_icon.add_css_class("tutorial-check");
+        let check = SwipeCard::new(&check_icon);
+        let ready = gtk::Label::new(Some("Готово! Теперь выбери папку"));
+        ready.add_css_class("title-2");
+        let finale = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        finale.set_valign(gtk::Align::Center);
+        finale.append(&check);
+        finale.append(&ready);
+        stack.add_named(&finale, Some("tutorial-done"));
+
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&stack));
+        let (welcome, start_btn) = tutorial::welcome();
+        welcome.set_visible(false);
+        let layers = gtk::Overlay::new();
+        layers.set_child(Some(&toasts));
+        layers.add_overlay(&welcome);
         let view = adw::ToolbarView::new();
         view.add_top_bar(&header);
-        view.set_content(Some(&toasts));
+        view.set_content(Some(&layers));
         window.set_content(Some(&view));
 
         let this = Rc::new(Window {
@@ -226,6 +290,10 @@ impl Window {
             toasts,
             done,
             undo_buttons: [undo_btn.clone(), header_undo.clone()],
+            welcome,
+            skip: skip.clone(),
+            hint_label,
+            check,
             front,
             back,
             state: RefCell::default(),
@@ -239,6 +307,10 @@ impl Window {
             let w = this.clone();
             b.connect_clicked(move |_| w.undo());
         }
+        let w = this.clone();
+        start_btn.connect_clicked(move |_| w.begin_tutorial());
+        let w = this.clone();
+        skip.connect_clicked(move |_| w.finish_tutorial());
         for (b, v) in [(&nope_btn, Verdict::Dislike), (&fav_btn, Verdict::Favorite), (&like_btn, Verdict::Like)] {
             let w = this.clone();
             b.connect_clicked(move |_| w.decide(v));
@@ -270,17 +342,23 @@ impl Window {
         drag.connect_drag_begin(move |g, _, _| {
             if w.busy() || !w.front.has_content() {
                 g.set_state(gtk::EventSequenceState::Denied);
+                return;
             }
+            // A tutorial hint may be mid-tilt: catch the card where it is.
+            w.stop_hint();
+            w.state.borrow_mut().drag_base = w.front.card.offset();
         });
         let w = self.clone();
         drag.connect_drag_update(move |g, dx, dy| {
             if dx.hypot(dy) > 8.0 {
                 g.set_state(gtk::EventSequenceState::Claimed);
             }
-            w.set_offset(dx, dy);
+            let (bx, by) = w.state.borrow().drag_base;
+            w.set_offset(bx + dx, by + dy);
         });
         let w = self.clone();
-        drag.connect_drag_end(move |_, dx, dy| {
+        drag.connect_drag_end(move |_, _, _| {
+            let (dx, dy) = w.front.card.offset();
             let threshold = (w.front.card.width() as f64 * 0.25).max(90.0);
             if -dy > threshold && -dy > dx.abs() {
                 w.decide(Verdict::Favorite);
@@ -301,9 +379,18 @@ impl Window {
         let w = self.clone();
         keys.connect_key_pressed(move |_, key, _, mods| {
             let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
+            if w.welcome.is_visible() {
+                match key {
+                    gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space => w.begin_tutorial(),
+                    gdk::Key::Escape => w.finish_tutorial(),
+                    _ => return glib::Propagation::Proceed,
+                }
+                return glib::Propagation::Stop;
+            }
             let page = w.stack.visible_child_name();
             let sorting = page.as_deref() == Some("cards");
             match key {
+                gdk::Key::Escape if w.state.borrow().tutorial => w.finish_tutorial(),
                 gdk::Key::o | gdk::Key::O if ctrl => w.choose_folder(),
                 gdk::Key::z | gdk::Key::Z if ctrl => w.undo(),
                 _ if ctrl => return glib::Propagation::Proceed,
@@ -344,6 +431,7 @@ impl Window {
     }
 
     pub fn open(self: &Rc<Self>, dir: &Path) {
+        self.leave_tutorial();
         self.finish_anim();
         let items = match media::scan(dir) {
             Ok(items) => items,
@@ -363,9 +451,14 @@ impl Window {
         self.refresh();
     }
 
-    fn current(&self, offset: usize) -> Option<Item> {
+    fn current(&self, offset: usize) -> Option<Source> {
         let s = self.state.borrow();
-        s.items.get(s.idx + offset).cloned()
+        let i = s.idx + offset;
+        if s.tutorial {
+            (i < STEPS.len()).then_some(Source::Cat(i))
+        } else {
+            s.items.get(i).cloned().map(Source::File)
+        }
     }
 
     fn load_front(&self) {
@@ -392,6 +485,23 @@ impl Window {
     /// Updates the title, counters, undo sensitivity and the visible page.
     fn refresh(&self) {
         let s = self.state.borrow();
+        self.skip.set_visible(s.tutorial);
+        self.hint_label.set_visible(s.tutorial && s.idx < STEPS.len());
+        for b in &self.undo_buttons {
+            b.set_visible(!s.tutorial);
+        }
+        if s.tutorial {
+            self.title.set_title("Обучение");
+            if let Some(step) = STEPS.get(s.idx) {
+                self.title.set_subtitle(&format!("{} из {}", s.idx + 1, STEPS.len()));
+                self.hint_label.set_label(step.hint);
+                self.stack.set_visible_child_name("cards");
+            } else {
+                self.title.set_subtitle("");
+                self.stack.set_visible_child_name("tutorial-done");
+            }
+            return;
+        }
         let name = s.folder.as_ref().and_then(|f| f.file_name()).map(|n| n.to_string_lossy().into_owned());
         self.title.set_title(name.as_deref().unwrap_or("Chootho"));
         let page = match (&s.folder, s.idx < s.items.len()) {
@@ -467,12 +577,24 @@ impl Window {
             target,
         );
         self.set_anim(anim);
+        self.schedule_hint(5000);
     }
 
     /// Flies the front card off in the verdict's direction, then moves the file.
     fn decide(self: &Rc<Self>, verdict: Verdict) {
+        self.stop_hint();
         self.finish_anim();
         if !self.front.has_content() {
+            return;
+        }
+        let expected = {
+            let s = self.state.borrow();
+            s.tutorial.then(|| STEPS.get(s.idx).map(|step| step.verdict)).flatten()
+        };
+        if expected.is_some_and(|e| e != verdict) {
+            // Wrong way during the tutorial: bounce back and show it again.
+            self.spring_home();
+            self.schedule_hint(900);
             return;
         }
         let (sx, sy) = self.front.card.offset();
@@ -499,10 +621,20 @@ impl Window {
     }
 
     fn commit(self: &Rc<Self>, verdict: Verdict) {
+        if self.state.borrow().tutorial {
+            self.state.borrow_mut().idx += 1;
+            self.promote();
+            if self.state.borrow().idx < STEPS.len() {
+                self.schedule_hint(700);
+            } else {
+                self.celebrate();
+            }
+            return;
+        }
         let (item, folder) = {
             let s = self.state.borrow();
             match (self.current(0), s.folder.clone()) {
-                (Some(i), Some(f)) => (i, f),
+                (Some(Source::File(i)), Some(f)) => (i, f),
                 _ => return,
             }
         };
@@ -546,6 +678,9 @@ impl Window {
     }
 
     fn undo(self: &Rc<Self>) {
+        if self.state.borrow().tutorial {
+            return;
+        }
         self.finish_anim();
         let Some(moved) = self.state.borrow_mut().history.pop() else { return };
         if let Err(e) = media::move_back(&moved.to, &moved.from) {
@@ -569,5 +704,130 @@ impl Window {
         let (sx, sy) = self.offscreen(moved.verdict, 0.0);
         self.set_offset(sx, sy);
         self.spring_home();
+    }
+
+    /// Shows the welcome panel; `pending` is opened when the tutorial ends.
+    pub fn start_tutorial(&self, pending: Option<PathBuf>) {
+        {
+            let mut s = self.state.borrow_mut();
+            s.pending = pending;
+            s.tutorial = true;
+            s.idx = 0;
+        }
+        // The first cat already waits under the translucent panel.
+        self.load_front();
+        self.load_back();
+        self.refresh();
+        self.welcome.set_visible(true);
+    }
+
+    fn begin_tutorial(self: &Rc<Self>) {
+        self.welcome.set_visible(false);
+        self.schedule_hint(700);
+    }
+
+    /// Big check mark, then on to normal use.
+    fn celebrate(self: &Rc<Self>) {
+        self.check.set_scale(0.3);
+        let card = self.check.clone();
+        let target = adw::CallbackAnimationTarget::new(move |v| card.set_scale(v));
+        let pop = adw::SpringAnimation::new(&self.check, 0.3, 1.0, adw::SpringParams::new(0.5, 1.0, 300.0), target);
+        pop.play();
+        let w = self.clone();
+        glib::timeout_add_local_once(Duration::from_millis(1600), move || {
+            if w.state.borrow().tutorial {
+                w.finish_tutorial();
+            }
+        });
+    }
+
+    /// Ends or skips the tutorial for good and opens the pending folder.
+    fn finish_tutorial(self: &Rc<Self>) {
+        let pending = self.state.borrow_mut().pending.take();
+        match pending {
+            Some(dir) => self.open(&dir),
+            None => {
+                self.leave_tutorial();
+                self.refresh();
+            }
+        }
+    }
+
+    fn leave_tutorial(&self) {
+        let was_on = self.welcome.is_visible() || self.state.borrow().tutorial;
+        if !was_on {
+            return;
+        }
+        tutorial::mark_done();
+        self.welcome.set_visible(false);
+        self.stop_hint();
+        let tutorial = std::mem::replace(&mut self.state.borrow_mut().tutorial, false);
+        if tutorial {
+            self.finish_anim();
+            self.front.clear();
+            self.back.clear();
+            self.back.card.set_visible(false);
+            self.state.borrow_mut().idx = 0;
+        }
+    }
+
+    /// Plays the tutorial hint after `ms` unless something happens first.
+    fn schedule_hint(self: &Rc<Self>, ms: u64) {
+        let generation = {
+            let mut s = self.state.borrow_mut();
+            if !s.tutorial {
+                return;
+            }
+            s.hint_gen += 1;
+            s.hint_gen
+        };
+        let w = self.clone();
+        glib::timeout_add_local_once(Duration::from_millis(ms), move || {
+            if w.state.borrow().hint_gen == generation {
+                w.play_hint();
+            }
+        });
+    }
+
+    /// Tilts the card toward the step's direction and back.
+    fn play_hint(self: &Rc<Self>) {
+        let verdict = {
+            let s = self.state.borrow();
+            match STEPS.get(s.idx) {
+                Some(step) if s.tutorial => step.verdict,
+                _ => return,
+            }
+        };
+        if self.busy() || self.front.card.offset() != (0.0, 0.0) {
+            return self.schedule_hint(1000);
+        }
+        let (ux, uy) = match verdict {
+            Verdict::Like => (1.0, 0.0),
+            Verdict::Dislike => (-1.0, 0.0),
+            Verdict::Favorite => (0.0, -1.0),
+        };
+        let w = self.clone();
+        let target = adw::CallbackAnimationTarget::new(move |t| {
+            let reach = HINT_REACH * (t * std::f64::consts::PI).sin();
+            w.set_offset(ux * reach, uy * reach);
+        });
+        let hint = adw::TimedAnimation::new(&self.front.card, 0.0, 1.0, 1300, target);
+        hint.set_easing(adw::Easing::Linear);
+        let w = self.clone();
+        hint.connect_done(move |_| w.schedule_hint(5000));
+        self.state.borrow_mut().hint = Some(hint.clone().upcast());
+        hint.play();
+    }
+
+    /// Freezes a running hint where it is, so a drag can take over from there.
+    fn stop_hint(&self) {
+        let hint = {
+            let mut s = self.state.borrow_mut();
+            s.hint_gen += 1;
+            s.hint.take()
+        };
+        if let Some(h) = hint {
+            h.pause();
+        }
     }
 }
