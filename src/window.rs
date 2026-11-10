@@ -244,6 +244,16 @@ impl Window {
             b.connect_clicked(move |_| w.decide(v));
         }
 
+        // Lets card contents (e.g. a failed "Open in…") report errors.
+        let toast = gio::SimpleAction::new("toast", Some(glib::VariantTy::STRING));
+        let w = this.clone();
+        toast.connect_activate(move |_, text| {
+            if let Some(text) = text.and_then(|t| t.str()) {
+                w.toast(text);
+            }
+        });
+        this.window.add_action(&toast);
+
         this.setup_drag();
         this.setup_keys();
         this.setup_drop();

@@ -1,6 +1,6 @@
 //! Folder scanning, file moves and per-format preview widgets.
 
-use gtk::prelude::*;
+use adw::prelude::*;
 use gtk::{gdk, gdk_pixbuf, gio, glib};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -98,11 +98,17 @@ pub struct Preview {
 pub fn preview(item: &Item) -> Preview {
     match item.kind {
         Kind::Image => {
-            let pic = picture();
-            pic.set_filename(Some(&item.path));
-            Preview { widget: pic.upcast(), stream: None }
+            let widget = match gdk::Texture::from_filename(&item.path) {
+                Ok(tex) => {
+                    let pic = picture();
+                    pic.set_paintable(Some(&tex));
+                    pic.upcast()
+                }
+                Err(e) => unsupported(&item.path, "Не удалось показать картинку", e.message()).upcast(),
+            };
+            Preview { widget, stream: None }
         }
-        Kind::Gif => Preview { widget: gif(&item.path).upcast(), stream: None },
+        Kind::Gif => Preview { widget: gif(&item.path), stream: None },
         Kind::Video => {
             let pic = picture();
             let stream = crate::player::PlayStream::video(&item.path, &pic);
@@ -114,41 +120,81 @@ pub fn preview(item: &Item) -> Preview {
             let overlay = gtk::Overlay::new();
             overlay.set_child(Some(&pic));
             overlay.add_overlay(&controls);
-            overlay.add_overlay(&error_label(stream.upcast_ref()));
+            overlay.add_overlay(&stream_error(stream.upcast_ref(), &item.path));
             Preview { widget: overlay.upcast(), stream: Some(stream.upcast()) }
         }
         Kind::Audio => audio(&item.path),
     }
 }
 
-/// A label that stays hidden until the stream fails, then says why.
-fn error_label(stream: &gtk::MediaStream) -> gtk::Label {
-    let label = gtk::Label::builder()
-        .wrap(true)
-        .justify(gtk::Justification::Center)
-        .valign(gtk::Align::Center)
-        .margin_start(24)
-        .margin_end(24)
-        .visible(false)
-        .build();
-    label.add_css_class("media-error");
-    let show = |label: &gtk::Label, stream: &gtk::MediaStream| {
-        if let Some(e) = stream.error() {
-            label.set_label(&format!(
-                "Не удалось воспроизвести\n{}\n\nВозможно, не хватает кодеков GStreamer (gst-libav, gst-plugins-bad).",
-                e.message()
-            ));
-            label.set_visible(true);
-        }
-    };
-    show(&label, stream);
-    let weak = label.downgrade();
-    stream.connect_error_notify(move |s| {
-        if let Some(label) = weak.upgrade() {
-            show(&label, s);
+/// What a card shows in place of a file it can't display: the reason and an
+/// "Open in…" button that lets another app handle it.
+fn unsupported(path: &Path, title: &str, reason: &str) -> gtk::Box {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    column.set_valign(gtk::Align::Center);
+    column.set_halign(gtk::Align::Center);
+    column.set_margin_start(24);
+    column.set_margin_end(24);
+    column.add_css_class("media-error");
+
+    let icon = gtk::Image::from_icon_name("image-missing-symbolic");
+    icon.set_pixel_size(64);
+    column.append(&icon);
+    let heading = gtk::Label::new(Some(title));
+    heading.add_css_class("title-4");
+    column.append(&heading);
+    let detail = gtk::Label::builder().label(reason).wrap(true).justify(gtk::Justification::Center).build();
+    detail.add_css_class("dim-label");
+    column.append(&detail);
+
+    let open = gtk::Button::with_label("Открыть в…");
+    open.add_css_class("pill");
+    open.add_css_class("suggested-action");
+    open.set_halign(gtk::Align::Center);
+    open.set_margin_top(6);
+    let file = gio::File::for_path(path);
+    open.connect_clicked(move |b| open_with(b, &file));
+    column.append(&open);
+    column
+}
+
+/// Asks the desktop which app should open `file`.
+fn open_with(button: &gtk::Button, file: &gio::File) {
+    let launcher = gtk::FileLauncher::new(Some(file));
+    launcher.set_always_ask(true);
+    let window = button.root().and_downcast::<gtk::Window>();
+    let toast_target = button.downgrade();
+    launcher.launch(window.as_ref(), gio::Cancellable::NONE, move |res| {
+        if let (Err(e), Some(b)) = (res, toast_target.upgrade()) {
+            if !e.matches(gtk::DialogError::Dismissed) {
+                let _ = b.activate_action("win.toast", Some(&e.message().to_variant()));
+            }
         }
     });
-    label
+}
+
+/// Hidden until the stream fails, then shows why and offers another app.
+fn stream_error(stream: &gtk::MediaStream, path: &Path) -> adw::Bin {
+    let bin = adw::Bin::new();
+    bin.set_visible(false);
+    let show = {
+        let path = path.to_path_buf();
+        move |bin: &adw::Bin, stream: &gtk::MediaStream| {
+            if let Some(e) = stream.error() {
+                let reason = format!("{}\nВозможно, не хватает кодеков GStreamer (gst-libav, gst-plugins-bad).", e.message());
+                bin.set_child(Some(&unsupported(&path, "Не удалось воспроизвести", &reason)));
+                bin.set_visible(true);
+            }
+        }
+    };
+    show(&bin, stream);
+    let weak = bin.downgrade();
+    stream.connect_error_notify(move |s| {
+        if let Some(bin) = weak.upgrade() {
+            show(&bin, s);
+        }
+    });
+    bin
 }
 
 fn picture() -> gtk::Picture {
@@ -158,7 +204,7 @@ fn picture() -> gtk::Picture {
     pic
 }
 
-fn gif(path: &Path) -> gtk::Picture {
+fn gif(path: &Path) -> gtk::Widget {
     let pic = picture();
     match gdk_pixbuf::PixbufAnimation::from_file(path) {
         Ok(anim) if !anim.is_static_image() => {
@@ -166,9 +212,12 @@ fn gif(path: &Path) -> gtk::Picture {
             pic.set_paintable(Some(&texture(&iter.pixbuf())));
             animate(pic.downgrade(), iter);
         }
-        _ => pic.set_filename(Some(path)),
+        _ => match gdk::Texture::from_filename(path) {
+            Ok(tex) => pic.set_paintable(Some(&tex)),
+            Err(e) => return unsupported(path, "Не удалось показать картинку", e.message()).upcast(),
+        },
     }
-    pic
+    pic.upcast()
 }
 
 #[allow(deprecated)]
@@ -232,7 +281,7 @@ fn audio(path: &Path) -> Preview {
 
     let controls = gtk::MediaControls::new(Some(&stream));
     column.append(&controls);
-    column.append(&error_label(stream.upcast_ref()));
+    column.append(&stream_error(stream.upcast_ref(), path));
 
     Preview { widget: column.upcast(), stream: Some(stream.upcast()) }
 }

@@ -30,12 +30,7 @@ const CSS: &str = r#"
     border-radius: 999px;
     padding: 0 6px;
 }
-.media-error {
-    color: white;
-    background-color: alpha(black, 0.6);
-    border-radius: 12px;
-    padding: 12px 16px;
-}
+.media-error { color: white; }
 .stamp {
     font-size: 30px;
     font-weight: 900;
