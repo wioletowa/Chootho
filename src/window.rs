@@ -198,7 +198,7 @@ impl Window {
         let empty = adw::StatusPage::builder()
             .icon_name("folder-pictures-symbolic")
             .title("Выберите папку")
-            .description("Или перетащите её в окно.\n← нет  ·  → лайк  ·  пробел/↑ избранное  ·  ↓ отмена")
+            .description("Или перетащите её в окно.")
             .child(&empty_open)
             .build();
 
