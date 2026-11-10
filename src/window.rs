@@ -139,6 +139,8 @@ struct State {
     anim: Option<adw::Animation>,
     /// Card offset when the current drag started (a hint may have tilted it).
     drag_base: (f64, f64),
+    /// Recent pointer positions (event time in ms, x, y) to measure flick speed.
+    drag_trail: Vec<(u32, f64, f64)>,
     /// Tutorial mode: `idx` is the step and `items` stays empty.
     tutorial: bool,
     hint: Option<adw::Animation>,
@@ -340,37 +342,72 @@ impl Window {
         drag.set_propagation_phase(gtk::PropagationPhase::Capture);
         let w = self.clone();
         drag.connect_drag_begin(move |g, _, _| {
-            if w.busy() || !w.front.has_content() {
+            // Quick successive swipes start while the last card is still
+            // flying or settling: finish that at once instead of ignoring them.
+            for _ in 0..3 {
+                if !w.busy() {
+                    break;
+                }
+                w.finish_anim();
+            }
+            if !w.front.has_content() {
                 g.set_state(gtk::EventSequenceState::Denied);
                 return;
             }
             // A tutorial hint may be mid-tilt: catch the card where it is.
             w.stop_hint();
-            w.state.borrow_mut().drag_base = w.front.card.offset();
+            let mut s = w.state.borrow_mut();
+            s.drag_base = w.front.card.offset();
+            s.drag_trail.clear();
         });
         let w = self.clone();
         drag.connect_drag_update(move |g, dx, dy| {
             if dx.hypot(dy) > 8.0 {
                 g.set_state(gtk::EventSequenceState::Claimed);
             }
-            let (bx, by) = w.state.borrow().drag_base;
+            let (bx, by) = {
+                let mut s = w.state.borrow_mut();
+                let now = g.current_event_time();
+                s.drag_trail.retain(|&(t, _, _)| now.wrapping_sub(t) <= 100);
+                s.drag_trail.push((now, dx, dy));
+                s.drag_base
+            };
             w.set_offset(bx + dx, by + dy);
         });
         let w = self.clone();
-        drag.connect_drag_end(move |_, _, _| {
+        drag.connect_drag_end(move |g, _, _| {
             let (dx, dy) = w.front.card.offset();
+            let (vx, vy) = w.flick_velocity(g.current_event_time());
             let threshold = (w.front.card.width() as f64 * 0.25).max(90.0);
-            if -dy > threshold && -dy > dx.abs() {
+            // A fast flick counts even if the card didn't travel far.
+            const FLICK_SPEED: f64 = 600.0;
+            const FLICK_MIN: f64 = 30.0;
+            let flick_up = -vy > FLICK_SPEED && -vy > vx.abs() && -dy > FLICK_MIN;
+            let flick_x = vx.abs() > FLICK_SPEED && vx.abs() > vy.abs() && dx.abs() > FLICK_MIN && dx.signum() == vx.signum();
+            if (-dy > threshold && -dy > dx.abs()) || flick_up {
                 w.decide(Verdict::Favorite);
-            } else if dx > threshold {
+            } else if dx > threshold || (flick_x && vx > 0.0) {
                 w.decide(Verdict::Like);
-            } else if dx < -threshold {
+            } else if dx < -threshold || (flick_x && vx < 0.0) {
                 w.decide(Verdict::Dislike);
             } else {
                 w.spring_home();
             }
         });
         self.front.card.add_controller(drag);
+    }
+
+    /// Pointer speed in px/s over the last ~100 ms of the drag.
+    fn flick_velocity(&self, now: u32) -> (f64, f64) {
+        let s = self.state.borrow();
+        let recent: Vec<_> = s.drag_trail.iter().filter(|&&(t, _, _)| now.wrapping_sub(t) <= 100).collect();
+        match (recent.first(), recent.last()) {
+            (Some(&&(t0, x0, y0)), Some(&&(t1, x1, y1))) if t1 > t0 => {
+                let dt = (t1 - t0) as f64 / 1000.0;
+                ((x1 - x0) / dt, (y1 - y0) / dt)
+            }
+            _ => (0.0, 0.0),
+        }
     }
 
     fn setup_keys(self: &Rc<Self>) {
