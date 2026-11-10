@@ -16,7 +16,6 @@ const CSS: &str = r#"
     border-radius: 24px;
     box-shadow: 0 6px 22px alpha(black, 0.28);
 }
-.back .card-frame { opacity: 0.55; }
 .card-frame .caption {
     color: white;
     background-color: alpha(black, 0.45);

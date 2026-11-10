@@ -6,14 +6,25 @@ use crate::media::{self, Item, Verdict};
 use crate::tutorial::{self, STEPS};
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
 const BACK_SCALE: f64 = 0.94;
+const BACK_OPACITY: f64 = 0.55;
 /// How far the tutorial's hint tilts the card, in pixels.
 const HINT_REACH: f64 = 70.0;
+
+/// Sizes and lights up the back card as the front one moves away, so it is
+/// already in place when it takes over. `fade` fades a freshly loaded card in.
+fn style_back(front: &SwipeCard, back: &SwipeCard, fade: f64) {
+    let (dx, dy) = front.offset();
+    let reach = (front.width().max(1) as f64 * 0.6).max(1.0);
+    let p = (dx.hypot(dy) / reach).clamp(0.0, 1.0);
+    back.set_scale(BACK_SCALE + (1.0 - BACK_SCALE) * p);
+    back.set_opacity(fade * (BACK_OPACITY + (1.0 - BACK_OPACITY) * p));
+}
 
 /// What a card shows: a file from the folder, or a tutorial cat.
 enum Source {
@@ -163,6 +174,7 @@ pub struct Window {
     check: SwipeCard,
     front: Slot,
     back: Slot,
+    back_fade: Rc<Cell<f64>>,
     state: RefCell<State>,
 }
 
@@ -298,6 +310,7 @@ impl Window {
             check,
             front,
             back,
+            back_fade: Rc::new(Cell::new(1.0)),
             state: RefCell::default(),
         });
 
@@ -517,6 +530,19 @@ impl Window {
             None => self.back.clear(),
         }
         self.back.card.set_visible(self.back.has_content());
+        if !self.back.has_content() {
+            return;
+        }
+        let (front, back, fade) = (self.front.card.clone(), self.back.card.clone(), self.back_fade.clone());
+        fade.set(0.0);
+        style_back(&front, &back, 0.0);
+        let target = adw::CallbackAnimationTarget::new(move |v| {
+            fade.set(v);
+            style_back(&front, &back, v);
+        });
+        let anim = adw::TimedAnimation::new(&self.back.card, 0.0, 1.0, 200, target);
+        anim.set_easing(adw::Easing::EaseOutCubic);
+        anim.play();
     }
 
     /// Updates the title, counters, undo sensitivity and the visible page.
@@ -591,6 +617,7 @@ impl Window {
     fn set_offset(&self, dx: f64, dy: f64) {
         self.front.card.set_offset(dx, dy);
         self.update_stamps();
+        style_back(&self.front.card, &self.back.card, self.back_fade.get());
     }
 
     fn update_stamps(&self) {
@@ -696,14 +723,10 @@ impl Window {
         self.front.card.set_offset(0.0, 0.0);
         self.update_stamps();
         if self.back.has_content() {
+            // The back card has grown into place during the fly-out.
             self.back.hand_to(&self.front);
             self.front.play();
-            self.front.card.set_scale(BACK_SCALE);
-            let card = self.front.card.clone();
-            let target = adw::CallbackAnimationTarget::new(move |s| card.set_scale(s));
-            let anim = adw::TimedAnimation::new(&self.front.card, BACK_SCALE, 1.0, 160, target);
-            anim.set_easing(adw::Easing::EaseOutCubic);
-            self.set_anim(anim);
+            self.front.card.set_scale(1.0);
         } else {
             self.load_front();
         }
@@ -731,6 +754,7 @@ impl Window {
         if self.front.has_content() {
             self.front.pause();
             self.front.hand_to(&self.back);
+            self.back_fade.set(1.0);
         } else {
             self.back.clear();
         }
