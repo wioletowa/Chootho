@@ -1,0 +1,63 @@
+name: AppImage
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    # The oldest supported base (GTK 4.14, libadwaita 1.5, glibc 2.39), so the
+    # AppImage runs there and on anything newer.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev desktop-file-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Assemble AppDir
+        run: |
+          id=io.github.wioletowa.Chootho
+          install -Dm755 target/release/chootho AppDir/usr/bin/chootho
+          install -Dm644 data/$id.desktop AppDir/usr/share/applications/$id.desktop
+          install -Dm644 data/$id.svg AppDir/usr/share/icons/hicolor/scalable/apps/$id.svg
+          install -Dm644 assets/icons/chootho.png AppDir/usr/share/icons/hicolor/256x256/apps/$id.png
+          cp data/$id.desktop AppDir/
+          cp assets/icons/chootho.png AppDir/$id.png
+          ln -s usr/bin/chootho AppDir/AppRun
+          desktop-file-validate AppDir/$id.desktop
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          ARCH: x86_64
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage AppDir Chootho-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Chootho-x86_64.AppImage
+          path: Chootho-x86_64.AppImage
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Chootho $tag" --generate-notes
+          gh release upload "$tag" Chootho-x86_64.AppImage --clobber

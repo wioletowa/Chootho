@@ -8,7 +8,7 @@ mod window;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
-const APP_ID: &str = "io.github.whyoolw.Chootho";
+const APP_ID: &str = "io.github.wioletowa.Chootho";
 
 const CSS: &str = r#"
 .card-frame {
@@ -74,6 +74,7 @@ fn main() -> glib::ExitCode {
         .build();
 
     app.connect_startup(|_| {
+        gtk::Window::set_default_icon_name(APP_ID);
         if let Err(e) = gst::init() {
             eprintln!("GStreamer init failed: {e}");
         }

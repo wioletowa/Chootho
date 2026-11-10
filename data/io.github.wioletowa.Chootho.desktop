@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chootho
+Comment=Sort a folder of photos, videos and music by swiping
+Exec=chootho %f
+Icon=io.github.wioletowa.Chootho
+Terminal=false
+Categories=Graphics;Viewer;
+Keywords=photo;image;sort;swipe;tinder;gallery;
+StartupNotify=true

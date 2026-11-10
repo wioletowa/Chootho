@@ -104,7 +104,7 @@ pub fn preview(item: &Item) -> Preview {
                     pic.set_paintable(Some(&tex));
                     pic.upcast()
                 }
-                Err(e) => unsupported(&item.path, "Не удалось показать картинку", e.message()).upcast(),
+                Err(e) => unsupported(&item.path, "Can't show this image", e.message()).upcast(),
             };
             Preview { widget, stream: None }
         }
@@ -147,7 +147,7 @@ fn unsupported(path: &Path, title: &str, reason: &str) -> gtk::Box {
     detail.add_css_class("dim-label");
     column.append(&detail);
 
-    let open = gtk::Button::with_label("Открыть в…");
+    let open = gtk::Button::with_label("Open With…");
     open.add_css_class("pill");
     open.add_css_class("suggested-action");
     open.set_halign(gtk::Align::Center);
@@ -181,8 +181,8 @@ fn stream_error(stream: &gtk::MediaStream, path: &Path) -> adw::Bin {
         let path = path.to_path_buf();
         move |bin: &adw::Bin, stream: &gtk::MediaStream| {
             if let Some(e) = stream.error() {
-                let reason = format!("{}\nВозможно, не хватает кодеков GStreamer (gst-libav, gst-plugins-bad).", e.message());
-                bin.set_child(Some(&unsupported(&path, "Не удалось воспроизвести", &reason)));
+                let reason = format!("{}\nGStreamer codecs may be missing (gst-libav, gst-plugins-bad).", e.message());
+                bin.set_child(Some(&unsupported(&path, "Can't play this file", &reason)));
                 bin.set_visible(true);
             }
         }
@@ -214,7 +214,7 @@ fn gif(path: &Path) -> gtk::Widget {
         }
         _ => match gdk::Texture::from_filename(path) {
             Ok(tex) => pic.set_paintable(Some(&tex)),
-            Err(e) => return unsupported(path, "Не удалось показать картинку", e.message()).upcast(),
+            Err(e) => return unsupported(path, "Can't show this image", e.message()).upcast(),
         },
     }
     pic.upcast()

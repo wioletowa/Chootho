@@ -15,17 +15,17 @@ pub const STEPS: [Step; 3] = [
     Step {
         image: include_bytes!("../assets/tutorial/cat1.jpg"),
         verdict: Verdict::Like,
-        hint: "Нравится? Смахни вправо или нажми →",
+        hint: "Like it? Swipe right or press →",
     },
     Step {
         image: include_bytes!("../assets/tutorial/cat2.jpg"),
         verdict: Verdict::Dislike,
-        hint: "Не то? Смахни влево или нажми ←",
+        hint: "Not for you? Swipe left or press ←",
     },
     Step {
         image: include_bytes!("../assets/tutorial/cat3.jpg"),
         verdict: Verdict::Favorite,
-        hint: "Лучшее — в избранное: смахни вверх или нажми пробел",
+        hint: "A keeper? Swipe up or press Space to favorite",
     },
 ];
 
@@ -89,22 +89,22 @@ pub fn welcome() -> (gtk::Box, gtk::Button) {
         .margin_top(18)
         .build();
     let up = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    up.append(&arrow("избранное", "fav"));
+    up.append(&arrow("favorite", "fav"));
     up.append(&arrow("↑", "fav"));
     diagram.attach(&up, 1, 0, 1, 1);
-    diagram.attach(&arrow("← нет", "nope"), 0, 1, 1, 1);
+    diagram.attach(&arrow("← nope", "nope"), 0, 1, 1, 1);
     // Empty middle keeps the arrows apart, pointing at the card beneath.
     let gap = gtk::Box::new(gtk::Orientation::Vertical, 0);
     gap.set_size_request(72, 48);
     diagram.attach(&gap, 1, 1, 1, 1);
-    diagram.attach(&arrow("лайк →", "like"), 2, 1, 1, 1);
+    diagram.attach(&arrow("like →", "like"), 2, 1, 1, 1);
     column.append(&diagram);
 
-    let keys = gtk::Label::new(Some("↓ или Ctrl+Z — отменить"));
+    let keys = gtk::Label::new(Some("↓ or Ctrl+Z to undo"));
     keys.add_css_class("dim-label");
     column.append(&keys);
 
-    let start = gtk::Button::with_label("Начать");
+    let start = gtk::Button::with_label("Start");
     start.add_css_class("pill");
     start.add_css_class("suggested-action");
     start.set_halign(gtk::Align::Center);

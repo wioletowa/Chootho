@@ -52,9 +52,9 @@ impl Slot {
             label
         };
         // Each stamp sits on the side the card is moving away from.
-        let like = stamp("ЛАЙК", "like", gtk::Align::Start, gtk::Align::Start);
-        let nope = stamp("НЕТ", "nope", gtk::Align::End, gtk::Align::Start);
-        let fav = stamp("★ ИЗБРАННОЕ", "fav", gtk::Align::Center, gtk::Align::End);
+        let like = stamp("LIKE", "like", gtk::Align::Start, gtk::Align::Start);
+        let nope = stamp("NOPE", "nope", gtk::Align::End, gtk::Align::Start);
+        let fav = stamp("★ FAVORITE", "fav", gtk::Align::Center, gtk::Align::End);
 
         let caption = gtk::Label::new(None);
         caption.add_css_class("caption");
@@ -179,28 +179,28 @@ impl Window {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title));
         let open_btn = gtk::Button::from_icon_name("folder-open-symbolic");
-        open_btn.set_tooltip_text(Some("Открыть папку (Ctrl+O)"));
+        open_btn.set_tooltip_text(Some("Open Folder (Ctrl+O)"));
         header.pack_start(&open_btn);
         let header_undo = gtk::Button::from_icon_name("edit-undo-symbolic");
-        header_undo.set_tooltip_text(Some("Отменить (Ctrl+Z, ↓)"));
+        header_undo.set_tooltip_text(Some("Undo (Ctrl+Z, ↓)"));
         header.pack_end(&header_undo);
         let skip = gtk::Button::builder()
-            .child(&adw::ButtonContent::builder().label("Пропустить").icon_name("go-next-symbolic").build())
-            .tooltip_text("Пропустить обучение (Esc)")
+            .child(&adw::ButtonContent::builder().label("Skip").icon_name("go-next-symbolic").build())
+            .tooltip_text("Skip the tutorial (Esc)")
             .visible(false)
             .build();
         skip.add_css_class("flat");
         header.pack_end(&skip);
 
         // Empty state.
-        let empty_open = gtk::Button::with_label("Открыть папку");
+        let empty_open = gtk::Button::with_label("Open Folder");
         empty_open.add_css_class("pill");
         empty_open.add_css_class("suggested-action");
         empty_open.set_halign(gtk::Align::Center);
         let empty = adw::StatusPage::builder()
             .icon_name("folder-pictures-symbolic")
-            .title("Выберите папку")
-            .description("Или перетащите её в окно.")
+            .title("Choose a Folder")
+            .description("Or drop one onto the window.")
             .child(&empty_open)
             .build();
 
@@ -226,10 +226,10 @@ impl Window {
             b.set_valign(gtk::Align::Center);
             b
         };
-        let undo_btn = action("↶", "undo", "Отменить (Ctrl+Z, ↓)");
-        let nope_btn = action("✕", "nope", "Нет (←)");
-        let fav_btn = action("★", "fav", "В избранное (пробел, ↑)");
-        let like_btn = action("♥", "like", "Лайк (→)");
+        let undo_btn = action("↶", "undo", "Undo (Ctrl+Z, ↓)");
+        let nope_btn = action("✕", "nope", "Nope (←)");
+        let fav_btn = action("★", "fav", "Favorite (Space, ↑)");
+        let like_btn = action("♥", "like", "Like (→)");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 18);
         buttons.set_halign(gtk::Align::Center);
         buttons.set_margin_top(14);
@@ -245,12 +245,12 @@ impl Window {
         cards.append(&deck);
         cards.append(&buttons);
 
-        let done_open = gtk::Button::with_label("Открыть другую папку");
+        let done_open = gtk::Button::with_label("Open Another Folder");
         done_open.add_css_class("pill");
         done_open.set_halign(gtk::Align::Center);
         let done = adw::StatusPage::builder()
             .icon_name("object-select-symbolic")
-            .title("Всё рассортировано")
+            .title("All Sorted")
             .child(&done_open)
             .build();
 
@@ -265,7 +265,7 @@ impl Window {
         check_icon.set_pixel_size(160);
         check_icon.add_css_class("tutorial-check");
         let check = SwipeCard::new(&check_icon);
-        let ready = gtk::Label::new(Some("Готово! Теперь выбери папку"));
+        let ready = gtk::Label::new(Some("Done! Now pick a folder"));
         ready.add_css_class("title-2");
         let finale = gtk::Box::new(gtk::Orientation::Vertical, 18);
         finale.set_valign(gtk::Align::Center);
@@ -455,7 +455,7 @@ impl Window {
     }
 
     fn choose_folder(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder().title("Папка с медиа").modal(true).build();
+        let dialog = gtk::FileDialog::builder().title("Media Folder").modal(true).build();
         if let Some(dir) = self.state.borrow().folder.as_ref() {
             dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
         }
@@ -472,7 +472,7 @@ impl Window {
         self.finish_anim();
         let items = match media::scan(dir) {
             Ok(items) => items,
-            Err(e) => return self.toast(&format!("Не удалось открыть папку: {e}")),
+            Err(e) => return self.toast(&format!("Couldn't open the folder: {e}")),
         };
         self.front.clear();
         self.back.clear();
@@ -481,7 +481,7 @@ impl Window {
             *s = State { folder: Some(dir.to_path_buf()), items, ..State::default() };
         }
         if self.state.borrow().items.is_empty() {
-            self.toast("В этой папке нет картинок, видео или аудио");
+            self.toast("No images, videos or audio in this folder");
         }
         self.load_front();
         self.load_back();
@@ -528,9 +528,9 @@ impl Window {
             b.set_visible(!s.tutorial);
         }
         if s.tutorial {
-            self.title.set_title("Обучение");
+            self.title.set_title("Tutorial");
             if let Some(step) = STEPS.get(s.idx) {
-                self.title.set_subtitle(&format!("{} из {}", s.idx + 1, STEPS.len()));
+                self.title.set_subtitle(&format!("{} of {}", s.idx + 1, STEPS.len()));
                 self.hint_label.set_label(step.hint);
                 self.stack.set_visible_child_name("cards");
             } else {
@@ -548,7 +548,7 @@ impl Window {
             (Some(_), false) => "done",
         };
         self.title.set_subtitle(&match page {
-            "cards" => format!("{} из {}", s.idx + 1, s.items.len()),
+            "cards" => format!("{} of {}", s.idx + 1, s.items.len()),
             _ => String::new(),
         });
         for b in &self.undo_buttons {
@@ -557,7 +557,7 @@ impl Window {
         if page == "done" {
             let count = |v| s.history.iter().filter(|m| m.verdict == v).count();
             self.done.set_description(Some(&format!(
-                "♥ {}   ★ {}   ✕ {}\nФайлы разложены по папкам liked, favorites и disliked.",
+                "♥ {}   ★ {}   ✕ {}\nFiles were moved into liked, favorites and disliked.",
                 count(Verdict::Like),
                 count(Verdict::Favorite),
                 count(Verdict::Dislike),
@@ -682,7 +682,7 @@ impl Window {
                 s.idx += 1;
             }
             Err(e) => {
-                self.toast(&format!("Не удалось переместить файл: {e}"));
+                self.toast(&format!("Couldn't move the file: {e}"));
                 self.spring_home();
                 return;
             }
@@ -721,7 +721,7 @@ impl Window {
         self.finish_anim();
         let Some(moved) = self.state.borrow_mut().history.pop() else { return };
         if let Err(e) = media::move_back(&moved.to, &moved.from) {
-            self.toast(&format!("Не удалось вернуть файл: {e}"));
+            self.toast(&format!("Couldn't move the file back: {e}"));
             self.state.borrow_mut().history.push(moved);
             return;
         }

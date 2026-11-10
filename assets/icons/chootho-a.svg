@@ -4,7 +4,7 @@
     <linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa7f0"/><stop offset="1" stop-color="#4a6fc9"/></linearGradient>
   </defs>
   <rect x="30" y="20" width="56" height="80" rx="10" fill="url(#b)" transform="rotate(-14 58 60)"/>
-  <rect x="44" y="18" width="56" height="84" rx="10" fill="#c23656" transform="rotate(10 72 60)" opacity=".35" y2="1"/>
+  <rect x="44" y="18" width="56" height="84" rx="10" fill="#c23656" transform="rotate(10 72 60)" opacity=".35"/>
   <rect x="42" y="14" width="56" height="84" rx="10" fill="url(#f)" transform="rotate(10 70 56)"/>
   <path transform="rotate(10 70 56)" fill="#fff" d="M70 72c-1 0-2-.4-2.8-1.1C59 63.7 53 58.5 53 51.5 53 46.8 56.6 43 61.2 43c3.2 0 5.6 1.6 6.8 3.9 1.2-2.3 3.6-3.9 6.8-3.9C79.4 43 83 46.8 83 51.5c0 7-6 12.2-14.2 19.4-.8.7-1.8 1.1-2.8 1.1z" />
 </svg>
