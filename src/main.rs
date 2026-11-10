@@ -1,4 +1,5 @@
 mod card;
+mod gpu;
 mod media;
 mod player;
 mod tutorial;
@@ -66,6 +67,7 @@ const CSS: &str = r#"
 "#;
 
 fn main() -> glib::ExitCode {
+    gpu::prefer_integrated();
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
