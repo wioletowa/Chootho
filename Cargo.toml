@@ -1,0 +1,17 @@
+[package]
+name = "chootho"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_8"] }
+gst = { version = "0.25", package = "gstreamer" }
+gst_app = { version = "0.25", package = "gstreamer-app" }
+gst_video = { version = "0.25", package = "gstreamer-video" }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
+lofty = "0.25.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
